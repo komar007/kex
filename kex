@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+T=$(mktemp -d)
+# shellcheck disable=SC2329
+cleanup() {
+	rm -fr "$T"
+}
+trap cleanup EXIT
+
+SSH_SOCK=$T/master_socket
+KEX_SOCK=$T/kex_socket
+
+(
+	coproc NC_PROC {
+		while true; do
+			nc -NlU "$KEX_SOCK"
+			rm -fr "$KEX_SOCK"
+		done
+	}
+	NC_READ_FD=${NC_PROC[0]}
+
+	while IFS=" " read -r cmd arg <&"$NC_READ_FD"; do
+		case "$cmd" in
+		OPEN)
+			port=$(sed -nr 's/^https?:\/\/(localhost|127.0.0.1)(:([0-9]+))?.*/\3/p' <<<"$arg")
+			ssh -S "$SSH_SOCK" whatever -O forward -L "$port:localhost:$port"
+			xdg-open "$arg"
+			;;
+		FORWARD_REMOTE)
+			ssh -S "$SSH_SOCK" whatever -O forward -R "$arg"
+			;;
+		FORWARD_LOCAL)
+			ssh -S "$SSH_SOCK" whatever -O forward -L "$arg"
+			;;
+		CANCEL_REMOTE)
+			ssh -S "$SSH_SOCK" whatever -O cancel -R "$arg"
+			;;
+		CANCEL_LOCAL)
+			ssh -S "$SSH_SOCK" whatever -O cancel -L "$arg"
+			;;
+		esac
+	done
+) &
+SRV_PID=$!
+
+KEX_SOCK_REMOTE=/tmp/kex.$RANDOM
+
+ssh -M -S "$SSH_SOCK" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "$1" -t '\
+	mkdir -p /tmp/kex; \
+	cat > /tmp/kex/kex \
+<<EOF
+	#!/bin/sh
+
+	case "\$1" in
+	open)
+		echo OPEN "\$2"
+		;;
+	forward)
+		case "\$2" in
+		-L) echo FORWARD_LOCAL "\$3" ;;
+		-R) echo FORWARD_REMOTE "\$3" ;;
+		-KL) echo CANCEL_LOCAL "\$3" ;;
+		-KR) echo CANCEL_REMOTE "\$3" ;;
+		esac
+	esac | nc -NU "\$KEX_SOCK"
+EOF
+	chmod +x /tmp/kex/kex; \
+	export PATH="/tmp/kex:$PATH"; \
+	export KEX_SOCK='$KEX_SOCK_REMOTE'; \
+	${SHELL:-/bin/sh}; \
+	E=$?; \
+	rm "$KEX_SOCK" -fr; \
+	exit "$E" \
+'
+SSH_STATUS=$?
+
+kill $SRV_PID
+
+exit $SSH_STATUS
