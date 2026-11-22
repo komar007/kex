@@ -5,7 +5,7 @@ T=$(mktemp -d)
 cleanup() {
 	rm -fr "$T"
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 if [[ "${1:-}" == "__handle" ]]; then
 	ssh_ctl() { ssh -S "$SSH_SOCK" whatever -O "$@"; }
