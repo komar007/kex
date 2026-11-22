@@ -1,55 +1,58 @@
 #!/usr/bin/env bash
 
-T=$(mktemp -d)
-# shellcheck disable=SC2329
-cleanup() {
-	rm -fr "$T"
-}
-trap cleanup EXIT INT TERM
+main() {
+	T=$(mktemp -d)
+	# shellcheck disable=SC2329
+	cleanup() { rm -fr "$T"; }
+	trap cleanup EXIT INT TERM
 
-if [[ "${1:-}" == "__handle" ]]; then
-	ssh_ctl() { ssh -S "$SSH_SOCK" whatever -O "$@"; }
-	mapfile -t args
-	case "${args[0]}" in
+	KEX_SOCK=$T/kex_socket
+	SSH_SOCK=$T/master_socket
+
+	__KEX_SSH_SOCK="$SSH_SOCK" socat UNIX-LISTEN:"$KEX_SOCK",fork,mode=0660 EXEC:"$0" &
+	SRV_PID=$!
+
+	KEX_SOCK_REMOTE=/tmp/kex.$RANDOM
+	ssh -M -S "$SSH_SOCK" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "$1" -t '\
+		mkdir -p /tmp/kex; \
+		cat > /tmp/kex/kex \
+	<<-"EOF"
+		#!/bin/sh
+		printf "%s\n" "$@" | nc -NU "$KEX_SOCK"
+	EOF
+		chmod +x /tmp/kex/kex; \
+		export PATH="/tmp/kex:$PATH"; \
+		export KEX_SOCK='$KEX_SOCK_REMOTE'; \
+
+		${SHELL:-/bin/sh}; \
+		E=$?; \
+
+		rm "$KEX_SOCK" -fr; \
+		exit "$E" \
+	'
+	SSH_STATUS=$?
+
+	kill $SRV_PID
+	exit $SSH_STATUS
+}
+
+request() {
+	ssh_ctl() { ssh -S "$__KEX_SSH_SOCK" whatever -O "$@"; }
+	case "$1" in
 	open)
-		url=${args[1]}
-		port=$(sed -nr 's/^https?:\/\/(localhost|127.0.0.1)(:([0-9]+))?.*/\3/p' <<<"$url")
+		port=$(sed -nr 's/^https?:\/\/(localhost|127.0.0.1)(:([0-9]+))?.*/\3/p' <<<"$2")
 		ssh_ctl forward -L "$port:localhost:$port"
-		xdg-open "$url"
+		xdg-open "$2"
 		;;
 	*)
-		ssh_ctl "${args[@]}"
+		ssh_ctl "$@"
 		;;
 	esac
-	exit 0
+}
+
+if [[ -n "${__KEX_SSH_SOCK:-}" ]]; then
+	mapfile -t args
+	request "${args[@]}"
+else
+	main "$@"
 fi
-
-KEX_SOCK=$T/kex_socket
-SSH_SOCK=$T/master_socket
-
-SSH_SOCK=$SSH_SOCK socat UNIX-LISTEN:"$KEX_SOCK",fork,mode=0660 EXEC:"$0 __handle" &
-SRV_PID=$!
-
-KEX_SOCK_REMOTE=/tmp/kex.$RANDOM
-
-ssh -M -S "$SSH_SOCK" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "$1" -t '\
-	mkdir -p /tmp/kex; \
-	cat > /tmp/kex/kex \
-<<EOF
-	#!/bin/sh
-
-	printf "%s\n" "\$@" | nc -NU "\$KEX_SOCK"
-EOF
-	chmod +x /tmp/kex/kex; \
-	export PATH="/tmp/kex:$PATH"; \
-	export KEX_SOCK='$KEX_SOCK_REMOTE'; \
-	${SHELL:-/bin/sh}; \
-	E=$?; \
-	rm "$KEX_SOCK" -fr; \
-	exit "$E" \
-'
-SSH_STATUS=$?
-
-kill $SRV_PID
-
-exit $SSH_STATUS
