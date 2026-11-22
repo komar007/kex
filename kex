@@ -36,16 +36,30 @@ main() {
 	exit $SSH_STATUS
 }
 
+request_usage() {
+	echo "usage:"
+	echo -e "\tkex open <url>"
+	echo -e "\tkex check|conninfo|channels"
+	echo -e "\tkex forward|cancel <ssh forward args...>"
+}
+
 request() {
 	ssh_ctl() { ssh -S "$__KEX_SSH_SOCK" whatever -O "$@"; }
 	case "$1" in
+	--help | help | "")
+		request_usage
+		;;
 	open)
 		port=$(sed -nr 's/^https?:\/\/(localhost|127.0.0.1)(:([0-9]+))?.*/\3/p' <<<"$2")
 		ssh_ctl forward -L "$port:localhost:$port"
 		xdg-open "$2"
 		;;
-	*)
+	check | conninfo | channels | forward | cancel)
 		ssh_ctl "$@"
+		;;
+	*)
+		echo "kex: unknown command"
+		request_usage
 		;;
 	esac
 }
