@@ -9,19 +9,18 @@ trap cleanup EXIT
 
 if [[ "${1:-}" == "__handle" ]]; then
 	ssh_ctl() { ssh -S "$SSH_SOCK" whatever -O "$@"; }
-	while IFS=" " read -r cmd arg; do
-		case "$cmd" in
-		OPEN)
-			port=$(sed -nr 's/^https?:\/\/(localhost|127.0.0.1)(:([0-9]+))?.*/\3/p' <<<"$arg")
-			ssh_ctl forward -L "$port:localhost:$port"
-			xdg-open "$arg"
-			;;
-		FORWARD_REMOTE) ssh_ctl forward -R "$arg" ;;
-		FORWARD_LOCAL) ssh_ctl forward -L "$arg" ;;
-		UNFORWARD_REMOTE) ssh_ctl cancel -R "$arg" ;;
-		UNFORWARD_LOCAL) ssh_ctl cancel -L "$arg" ;;
-		esac
-	done
+	mapfile -t args
+	case "${args[0]}" in
+	open)
+		url=${args[1]}
+		port=$(sed -nr 's/^https?:\/\/(localhost|127.0.0.1)(:([0-9]+))?.*/\3/p' <<<"$url")
+		ssh_ctl forward -L "$port:localhost:$port"
+		xdg-open "$url"
+		;;
+	*)
+		ssh_ctl "${args[@]}"
+		;;
+	esac
 	exit 0
 fi
 
@@ -39,23 +38,7 @@ ssh -M -S "$SSH_SOCK" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "$1" -t '\
 <<EOF
 	#!/bin/sh
 
-	case "\$1" in
-	open)
-		echo OPEN "\$2"
-		;;
-	forward)
-		case "\$2" in
-		-L) echo FORWARD_LOCAL "\$3" ;;
-		-R) echo FORWARD_REMOTE "\$3" ;;
-		esac
-		;;
-	unforward)
-		case "\$2" in
-		-L) echo UNFORWARD_LOCAL "\$3" ;;
-		-R) echo UNFORWARD_REMOTE "\$3" ;;
-		esac
-		;;
-	esac | nc -NU "\$KEX_SOCK"
+	printf "%s\n" "\$@" | nc -NU "\$KEX_SOCK"
 EOF
 	chmod +x /tmp/kex/kex; \
 	export PATH="/tmp/kex:$PATH"; \
