@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 
 main() {
+	declare host cmd
+	declare -a args
+	parse_ssh_opts host args cmd "$@"
+
 	T=$(mktemp -d)
 	# shellcheck disable=SC2329
 	cleanup() { rm -fr "$T"; }
@@ -13,27 +17,67 @@ main() {
 	SRV_PID=$!
 
 	KEX_SOCK_REMOTE=/tmp/kex.$RANDOM
-	ssh -M -S "$SSH_SOCK" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "$1" -t '\
-		mkdir -p /tmp/kex; \
-		cat > /tmp/kex/kex \
-	<<-"EOF"
-		#!/bin/sh
-		printf "%s\n" "$@" | nc -NU "$KEX_SOCK"
-	EOF
-		chmod +x /tmp/kex/kex; \
-		export PATH="/tmp/kex:$PATH"; \
-		export KEX_SOCK='$KEX_SOCK_REMOTE'; \
+	ssh "${args[@]}" -M -S "$SSH_SOCK" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "$host" -t '
+		wrapper() {
+			mkdir -p /tmp/kex;
+			cat > /tmp/kex/kex <<-"EOF"
+				#!/bin/sh
+				printf "%s\n" "$@" | nc -NU "$KEX_SOCK"
+			EOF
+			chmod +x /tmp/kex/kex;
+			export PATH="/tmp/kex:$PATH";
+			export KEX_SOCK='$KEX_SOCK_REMOTE';
 
-		${SHELL:-/bin/sh}; \
-		E=$?; \
+			${@:-${SHELL:-/bin/sh}};
+			E=$?;
 
-		rm "$KEX_SOCK" -fr; \
-		exit "$E" \
-	'
+			rm "$KEX_SOCK" -fr;
+			exit "$E";
+		};
+		wrapper
+	' "${cmd[@]}"
 	SSH_STATUS=$?
 
 	kill $SRV_PID
 	exit $SSH_STATUS
+}
+
+parse_ssh_opts() {
+	# ssh args that take another argument
+	local KVS="BbcDEeFIiJLlmOoPpQRSWw"
+
+	local -n out_host=$1 out_args=$2 out_cmd=$3
+	shift 3
+	out_host=
+	out_args=()
+
+	while [ $# -gt 0 ]; do
+		if [ "$1" = "--" ]; then
+			shift 1
+			break
+		elif [[ "$1" =~ ^-[^$KVS]*[$KVS]$ ]]; then
+			out_args+=("$1")
+			shift 1
+			if [ $# -gt 0 ]; then
+				out_args+=("$1")
+				shift 1
+			fi
+		elif [[ "$1" =~ ^-([^$KVS]+|[^$KVS]*[$KVS].+)$ ]]; then
+			out_args+=("$1")
+			shift 1
+		elif [ -z "${out_host:-}" ]; then
+			out_host=$1
+			shift 1
+		else
+			break
+		fi
+	done
+	if [ -z "$out_host" ] && [ $# -gt 0 ]; then
+		out_host=$1
+		shift 1
+	fi
+	# shellcheck disable=SC2034
+	out_cmd=("$@")
 }
 
 request_usage() {
@@ -67,6 +111,6 @@ request() {
 if [[ -n "${__KEX_SSH_SOCK:-}" ]]; then
 	mapfile -t args
 	request "${args[@]}"
-else
+elif [ -z "${__TEST__:-}" ]; then
 	main "$@"
 fi
