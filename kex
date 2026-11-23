@@ -4,6 +4,10 @@ main() {
 	declare host cmd
 	declare -a args
 	parse_ssh_opts host args cmd "$@"
+	declare -a tty=()
+	if [ ${#cmd[@]} -eq 0 ] && [ -t 0 ]; then
+		tty=(-t)
+	fi
 
 	T=$(mktemp -d)
 	# shellcheck disable=SC2329
@@ -17,7 +21,7 @@ main() {
 	SRV_PID=$!
 
 	KEX_SOCK_REMOTE=/tmp/kex.$RANDOM
-	ssh "${args[@]}" -M -S "$SSH_SOCK" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "$host" -t '
+	ssh "${tty[@]}" "${args[@]}" -M -S "$SSH_SOCK" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "$host" '
 		wrapper() {
 			mkdir -p /tmp/kex;
 			cat > /tmp/kex/kex <<-"EOF"
