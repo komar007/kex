@@ -6,6 +6,10 @@ main() {
 	parse_ssh_opts host args cmd "$@"
 	declare -a tty=()
 	if [ ${#cmd[@]} -eq 0 ] && [ -t 0 ]; then
+		# wrapping the original ssh remote command (see wrapper()) means ssh sees a command
+		# whether the user provided one or not; the pseudo-terminal logic must be
+		# reimplemented by providing an overridable (before user args) force opt when remote
+		# command is originally not provided
 		tty=(-t)
 	fi
 
@@ -52,6 +56,9 @@ wrapper() {
 	exit "$E"
 }
 
+# Parse ssh options and divide them into the remote command, hostname and other options.
+#
+# parse_ssh_opts OUT_HOST OUT_ARGS OUT_CMD <ssh options>
 parse_ssh_opts() {
 	# ssh args that take another argument
 	local KVS="BbcDEeFIiJLlmOoPpQRSWw"
@@ -97,6 +104,9 @@ request_usage() {
 	echo -e "\tkex forward|cancel <ssh forward args...>"
 }
 
+# Handle a single request on the local side
+#
+# request <request args as passed to companion on remote side>
 request() {
 	ssh_ctl() { ssh -S "$__KEX_SSH_SOCK" whatever -O "$@"; }
 	case "$1" in
