@@ -21,29 +21,35 @@ main() {
 	SRV_PID=$!
 
 	KEX_SOCK_REMOTE=/tmp/kex.$RANDOM
-	ssh "${tty[@]}" "${args[@]}" -M -S "$SSH_SOCK" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "$host" '
-		wrapper() {
-			T=$(mktemp -d) || exit 1
-			export KEX_SOCK='$KEX_SOCK_REMOTE'
-			export PATH="$T:$PATH"
-			trap "rm -fr -- \"$T\" \"$KEX_SOCK"\" EXIT HUP TERM
-			cat > "$T"/kex <<-"EOF"
-				#!/bin/sh
-				printf "%s\n" "$@" | nc -NU "$KEX_SOCK"
-			EOF
-			chmod +x "$T"/kex
-
-			${@:-${SHELL:-/bin/sh}}
-			E=$?
-
-			exit "$E"
-		}
-		wrapper
-	' "${cmd[@]}"
+	ssh "${tty[@]}" "${args[@]}" -M -S "$SSH_SOCK" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "$host" \
+		"$(declare -f wrapper); wrapper" $KEX_SOCK_REMOTE "${cmd[@]}"
 	SSH_STATUS=$?
 
 	kill $SRV_PID
 	exit $SSH_STATUS
+}
+
+# Wrap an ssh remote command injecting the 'kex' companion into its environment.
+#
+# wrapper kex_socket [command [argument ...]]
+wrapper() {
+	KEX_SOCK="$1"
+	shift 1
+
+	T=$(mktemp -d) || exit 1
+	trap 'rm -fr -- "$T" "$KEX_SOCK"' EXIT HUP TERM
+
+	cat >"$T"/kex <<-"EOF"
+		#!/bin/sh
+		printf "%s\n" "$@" | nc -NU "$KEX_SOCK"
+	EOF
+	chmod +x "$T"/kex
+
+	# shellcheck disable=SC2068
+	PATH="$T:$PATH" KEX_SOCK="$KEX_SOCK" ${@:-${SHELL:-/bin/sh}}
+	E=$?
+
+	exit "$E"
 }
 
 parse_ssh_opts() {
