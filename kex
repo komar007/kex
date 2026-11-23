@@ -23,21 +23,21 @@ main() {
 	KEX_SOCK_REMOTE=/tmp/kex.$RANDOM
 	ssh "${tty[@]}" "${args[@]}" -M -S "$SSH_SOCK" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "$host" '
 		wrapper() {
-			mkdir -p /tmp/kex;
-			cat > /tmp/kex/kex <<-"EOF"
+			T=$(mktemp -d) || exit 1
+			export KEX_SOCK='$KEX_SOCK_REMOTE'
+			export PATH="$T:$PATH"
+			trap "rm -fr -- \"$T\" \"$KEX_SOCK"\" EXIT HUP TERM
+			cat > "$T"/kex <<-"EOF"
 				#!/bin/sh
 				printf "%s\n" "$@" | nc -NU "$KEX_SOCK"
 			EOF
-			chmod +x /tmp/kex/kex;
-			export PATH="/tmp/kex:$PATH";
-			export KEX_SOCK='$KEX_SOCK_REMOTE';
+			chmod +x "$T"/kex
 
-			${@:-${SHELL:-/bin/sh}};
-			E=$?;
+			${@:-${SHELL:-/bin/sh}}
+			E=$?
 
-			rm "$KEX_SOCK" -fr;
-			exit "$E";
-		};
+			exit "$E"
+		}
 		wrapper
 	' "${cmd[@]}"
 	SSH_STATUS=$?
