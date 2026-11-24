@@ -128,10 +128,10 @@ request_usage() {
 #
 # request <request args as passed to companion on remote side>
 request() {
-	# TODO: when __KEX_SSH_SOCK is retrieved from ssh -G, it is TOKEN-expanded, but the result
-	# of that expansion may still contain TOKENs, which -S will wrongly expand again. Not sure
-	# how to approach this.
-	ssh_ctl() { ssh -S "$__KEX_SSH_SOCK" whatever -O "$@"; }
+	ssh_ctl() {
+		local ctl_escaped="${__KEX_SSH_SOCK//%/%%}"
+		ssh -S "$ctl_escaped" whatever -O "$@"
+	}
 	case "$1" in
 	--help | help | "")
 		request_usage
