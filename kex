@@ -18,14 +18,34 @@ main() {
 	cleanup() { rm -fr "$T"; }
 	trap cleanup EXIT INT TERM
 
-	KEX_SOCK=$T/kex_socket
-	SSH_SOCK=$T/master_socket
+	local ssh_sock
+	while IFS=' ' read -r key value; do
+		case "$key" in
+		controlpath)
+			ssh_sock=$value
+			;;
+		esac
+	done < <(ssh -G "${args[@]}" "$host")
 
-	__KEX_SSH_SOCK="$SSH_SOCK" socat UNIX-LISTEN:"$KEX_SOCK",fork,mode=0660 EXEC:"$0" &
+	declare -a extra_opts=()
+	if [ -z "${ssh_sock:-}" ]; then
+		ssh_sock=$T/master_socket
+		extra_opts=(-M -S "$ssh_sock")
+	fi
+
+	# TODO: if ControlPath is set, ControlMaster=no and there is no -O forward, then ssh either
+	# reuses a connection or makes a new one, and in the latter case, we don't have a socket.
+	# Adding -M or -O forward in this case would break intended behavior, while generating a
+	# warning would require parsing -O forward out of args, which we should probably implement
+	# at some point.
+
+	KEX_SOCK=$T/kex_socket
+
+	__KEX_SSH_SOCK="$ssh_sock" socat UNIX-LISTEN:"$KEX_SOCK",fork,mode=0660 EXEC:"$0" &
 	SRV_PID=$!
 
 	KEX_SOCK_REMOTE=/tmp/kex.$RANDOM
-	ssh "${tty[@]}" "${args[@]}" -M -S "$SSH_SOCK" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "$host" \
+	ssh "${tty[@]}" "${args[@]}" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "${extra_opts[@]}" "$host" \
 		"$(declare -f wrapper); wrapper" $KEX_SOCK_REMOTE "${cmd[@]}"
 	SSH_STATUS=$?
 
@@ -108,6 +128,9 @@ request_usage() {
 #
 # request <request args as passed to companion on remote side>
 request() {
+	# TODO: when __KEX_SSH_SOCK is retrieved from ssh -G, it is TOKEN-expanded, but the result
+	# of that expansion may still contain TOKENs, which -S will wrongly expand again. Not sure
+	# how to approach this.
 	ssh_ctl() { ssh -S "$__KEX_SSH_SOCK" whatever -O "$@"; }
 	case "$1" in
 	--help | help | "")
