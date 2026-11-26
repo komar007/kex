@@ -6,6 +6,11 @@ if [ -z "${__KEX_TEST__:-}" ]; then
 fi
 
 main() {
+	if ! command -v socat >/dev/null; then
+		echo "ERROR kex: socat not found" >&2
+		exit 1
+	fi
+
 	declare -a args host cmd
 	parse_ssh_opts args host cmd "$@"
 
