@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 
 main() {
-	declare host cmd
-	declare -a args
-	parse_ssh_opts host args cmd "$@"
+	declare -a args host cmd
+	parse_ssh_opts args host cmd "$@"
 	declare -a tty=()
 	if [ ${#cmd[@]} -eq 0 ] && [ -t 0 ]; then
 		# wrapping the original ssh remote command (see wrapper()) means ssh sees a command
@@ -18,6 +17,7 @@ main() {
 	cleanup() { rm -fr "$T"; }
 	trap cleanup EXIT INT TERM
 
+	local config=$(ssh -G "${args[@]}" "${host[@]}")
 	local ssh_sock
 	while IFS=' ' read -r key value; do
 		case "$key" in
@@ -25,7 +25,7 @@ main() {
 			ssh_sock=$value
 			;;
 		esac
-	done < <(ssh -G "${args[@]}" "$host")
+	done <<< "$config"
 
 	declare -a extra_opts=()
 	if [ -z "${ssh_sock:-}" ]; then
@@ -45,7 +45,7 @@ main() {
 	SRV_PID=$!
 
 	KEX_SOCK_REMOTE=/tmp/kex.$RANDOM
-	ssh "${tty[@]}" "${args[@]}" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "${extra_opts[@]}" "$host" \
+	ssh "${tty[@]}" "${args[@]}" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "${extra_opts[@]}" "${host[@]}" \
 		"$(declare -f wrapper); wrapper" $KEX_SOCK_REMOTE "${cmd[@]}"
 	SSH_STATUS=$?
 
@@ -76,18 +76,23 @@ wrapper() {
 	exit "$E"
 }
 
-# Parse ssh options and divide them into the remote command, hostname and other options.
+# Parse ssh arguments to divide them into the remote command and other arguments.
 #
-# parse_ssh_opts OUT_HOST OUT_ARGS OUT_CMD <ssh options>
+# parse_ssh_opts OUT_ARGS OUT_HOST_VERBATIM OUT_CMD <ssh arguments>
+#
+# $OUT_ARGS is guaranteed to not contain "--" as a delimiter, so adding options after $OUT_ARGS
+# is possible. If hostname is passed after a "--" delimiter, $OUT_HOST_VERBATIM contains both "--"
+# and hostname. Otherwise, $OUT_HOST_VERBATIM is empty and host may be inside $OUT_ARGS.
 parse_ssh_opts() {
 	# ssh args that take another argument
 	local KVS="BbcDEeFIiJLlmOoPpQRSWw"
 
-	local -n out_host=$1 out_args=$2 out_cmd=$3
+	local -n out_args=$1 out_host_verbatim=$2 out_cmd=$3
 	shift 3
-	out_host=
-	out_args=()
 
+	local host_consumed=0
+	out_args=()
+	out_host_verbatim=()
 	while [ $# -gt 0 ]; do
 		if [ "$1" = "--" ]; then
 			shift 1
@@ -102,15 +107,16 @@ parse_ssh_opts() {
 		elif [[ "$1" =~ ^-([^$KVS]+|[^$KVS]*[$KVS].+)$ ]]; then
 			out_args+=("$1")
 			shift 1
-		elif [ -z "${out_host:-}" ]; then
-			out_host=$1
+		elif [ "$host_consumed" -eq 0 ]; then
+			out_args+=("$1")
+			host_consumed=1
 			shift 1
 		else
 			break
 		fi
 	done
-	if [ -z "$out_host" ] && [ $# -gt 0 ]; then
-		out_host=$1
+	if [ "$host_consumed" -eq 0 ] && [ $# -gt 0 ]; then
+		out_host_verbatim+=("--" "$1")
 		shift 1
 	fi
 	# shellcheck disable=SC2034
