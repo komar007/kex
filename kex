@@ -1,8 +1,24 @@
 #!/usr/bin/env bash
 
+set -e
+set -o pipefail
+
 main() {
 	declare -a args host cmd
 	parse_ssh_opts args host cmd "$@"
+
+	local config
+	config=$(ssh -G "${args[@]}" "${host[@]}")
+
+	local ssh_sock
+	while IFS=' ' read -r key value; do
+		case "$key" in
+		controlpath)
+			ssh_sock=$value
+			;;
+		esac
+	done <<<"$config"
+
 	declare -a tty=()
 	if [ ${#cmd[@]} -eq 0 ] && [ -t 0 ]; then
 		# wrapping the original ssh remote command (see wrapper()) means ssh sees a command
@@ -14,18 +30,15 @@ main() {
 
 	T=$(mktemp -d)
 	# shellcheck disable=SC2329
-	cleanup() { rm -fr "$T"; }
+	SRV_PID=""
+	cleanup() {
+		if [ -n "$SRV_PID" ]; then
+			kill "$SRV_PID" 2>/dev/null || true
+			wait "$SRV_PID" 2>/dev/null || true
+		fi
+		rm -fr "$T" || true
+	}
 	trap cleanup EXIT INT TERM
-
-	local config=$(ssh -G "${args[@]}" "${host[@]}")
-	local ssh_sock
-	while IFS=' ' read -r key value; do
-		case "$key" in
-		controlpath)
-			ssh_sock=$value
-			;;
-		esac
-	done <<< "$config"
 
 	declare -a extra_opts=()
 	if [ -z "${ssh_sock:-}" ]; then
@@ -41,16 +54,12 @@ main() {
 
 	KEX_SOCK=$T/kex_socket
 
-	__KEX_SSH_SOCK="$ssh_sock" socat UNIX-LISTEN:"$KEX_SOCK",fork,mode=0660 EXEC:"$0" &
+	__KEX_SSH_SOCK="$ssh_sock" socat UNIX-LISTEN:"$KEX_SOCK",fork,mode=0660 EXEC:"$0" 2>"$T"/socat.log &
 	SRV_PID=$!
 
 	KEX_SOCK_REMOTE=/tmp/kex.$RANDOM
 	ssh "${tty[@]}" "${args[@]}" -R "$KEX_SOCK_REMOTE":"$KEX_SOCK" "${extra_opts[@]}" "${host[@]}" \
 		"$(declare -f wrapper); wrapper" $KEX_SOCK_REMOTE "${cmd[@]}"
-	SSH_STATUS=$?
-
-	kill $SRV_PID
-	exit $SSH_STATUS
 }
 
 # Wrap an ssh remote command injecting the 'kex' companion into its environment.
