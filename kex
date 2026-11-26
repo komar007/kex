@@ -61,7 +61,7 @@ main() {
 
 	KEX_SOCK=$T/kex_socket
 
-	__KEX_SSH_SOCK="$ssh_sock" socat UNIX-LISTEN:"$KEX_SOCK",fork,mode=0660 EXEC:"$0" 2>"$T"/socat.log &
+	__KEX_SSH_SOCK="$ssh_sock" socat -t 60 UNIX-LISTEN:"$KEX_SOCK",fork,mode=0660 EXEC:"$0" 2>"$T"/socat.log &
 	SRV_PID=$!
 
 	KEX_SOCK_REMOTE=/tmp/kex.$RANDOM
