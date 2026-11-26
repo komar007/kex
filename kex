@@ -175,14 +175,23 @@ request() {
 				port=443
 			fi
 		fi
+		local description=""
+		if [ -n "$port" ]; then
+			description="forward port $port and "
+		fi
+		description+="open $2?"
+		askpass "$description" || return 1
 		if [ -n "$port" ]; then
 			ssh_ctl forward -L "$port:localhost:$port" || return 1
 			# TODO: fall back to other local port on forward error
 		fi
 		xdg-open "$2"
 		;;
-	check | conninfo | channels | forward | cancel)
+	check | conninfo | channels)
 		ssh_ctl "$@"
+		;;
+	forward | cancel)
+		askpass "$*?" ssh_ctl "$@"
 		;;
 	*)
 		echo "kex: unknown command"
@@ -190,6 +199,18 @@ request() {
 		return 1
 		;;
 	esac
+}
+
+askpass() {
+	local description="kex: $1"
+	shift 1
+	if [ "$ASKPASS" != 0 ]; then
+		if ! "$SSH_ASKPASS" "$description"; then
+			echo "ERROR: authorization rejected"
+			return 1
+		fi
+	fi
+	"$@"
 }
 
 forward_to_client() {
