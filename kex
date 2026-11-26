@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 
-set -e
-set -o pipefail
+if [ -z "${__KEX_TEST__:-}" ]; then
+	set -e
+	set -o pipefail
+fi
 
 main() {
 	declare -a args host cmd
@@ -74,7 +76,13 @@ wrapper() {
 
 	cat >"$T"/kex <<-"EOF"
 		#!/bin/sh
-		printf "%s\n" "$@" | nc -NU "$KEX_SOCK"
+		printf "%s\n" "$@" | nc -NU "$KEX_SOCK" | while IFS=' ' read -r what line; do
+			case "$what" in
+			STDOUT) echo "$line" ;;
+			STDERR) echo "$line" >&2 ;;
+			EXIT) exit "$line" ;;
+			esac
+		done
 	EOF
 	chmod +x "$T"/kex
 
@@ -162,13 +170,25 @@ request() {
 	*)
 		echo "kex: unknown command"
 		request_usage
+		return 1
 		;;
 	esac
 }
 
+forward_to_client() {
+	local status
+	if "$@" 2> >(sed -r 's/^/STDERR /') > >(sed -r 's/^/STDOUT /'); then
+		status=0
+	else
+		status=$?
+	fi
+	wait || true
+	echo EXIT $status
+}
+
 if [[ -n "${__KEX_SSH_SOCK:-}" ]]; then
 	mapfile -t args
-	request "${args[@]}"
-elif [ -z "${__TEST__:-}" ]; then
+	forward_to_client request "${args[@]}"
+elif [ -z "${__KEX_TEST__:-}" ]; then
 	main "$@"
 fi
