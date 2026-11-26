@@ -160,8 +160,20 @@ request() {
 		request_usage
 		;;
 	open)
-		port=$(sed -nr 's/^https?:\/\/(localhost|127.0.0.1)(:([0-9]+))?.*/\3/p' <<<"$2")
-		ssh_ctl forward -L "$port:localhost:$port"
+		local port
+		port=$(sed -nr 's/^https?:\/\/(localhost|127\.0\.0\.1):([0-9]+)([/#?].*|$)/\2/p' <<<"$2")
+		if [ -z "$port" ]; then
+			port=$(sed -nr 's/^(https?):\/\/(localhost|127\.0\.0\.1)([/#?].*|$)/\1/p' <<<"$2")
+			if [ "$port" = http ]; then
+				port=80
+			elif [ "$port" = https ]; then
+				port=443
+			fi
+		fi
+		if [ -n "$port" ]; then
+			ssh_ctl forward -L "$port:localhost:$port" || return 1
+			# TODO: fall back to other local port on forward error
+		fi
 		xdg-open "$2"
 		;;
 	check | conninfo | channels | forward | cancel)
